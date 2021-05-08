@@ -1,10 +1,11 @@
 import sys, json, logging, re
-import RPi.GPIO as GPIO
+#import RPi.GPIO as GPIO
 from time import sleep, perf_counter
 import paho.mqtt.client as mqtt
 from os import path
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
+from package import *
 
 class pcolor:
     ''' Add color to print statements '''
@@ -293,7 +294,7 @@ def main():
     data_keys = ['RotEnc1Ci', 'RotEnc1Bi'] # If topic lvl2 name repeats would likely want the data_keys to be unique
     clkPin, dtPin, button_rotenc = 17, 27, 24
     setup_device(device, lvl2, publvl3, data_keys)
-    rotaryEncoderSet[device] = rotaryencoder.RotaryEncoder(clkPin, dtPin, button_rotenc, *data_keys, rotenc_logger)
+    rotaryEncoderSet[device] =    RotaryEncoder(*data_keys, gainmode="auto", maxA=0.4, address=0x40, mlogger=ina219_logger) #rotaryencoder.RotaryEncoder(clkPin, dtPin, button_rotenc, *data_keys, rotenc_logger)
 
     ina219Set = {}   # ina219 library has an internal logger named ina219. name it something different.
     ina219_logger = setup_logging(path.dirname(path.abspath(__file__)), 'custom', 'ina219lgr', log_level=logging.DEBUG, mode=1)
@@ -302,7 +303,7 @@ def main():
     publvl3 = MQTT_CLIENT_ID + "Test1" # Will be a tag in influxdb. Optional to modify it and describe experiment being ran
     data_keys = ['Vbusf', 'IbusAf', 'PowerWf']
     setup_device(device, lvl2, publvl3, data_keys)
-    ina219Set[device] = piina219.PiINA219(*data_keys, gainmode="auto", maxA=0.4, address=0x40, mlogger=ina219_logger)
+    ina219Set[device] =  #piina219.PiINA219(*data_keys, gainmode="auto", maxA=0.4, address=0x40, mlogger=ina219_logger)
 
     print("\n")
     for logger in _loggers:
@@ -338,11 +339,11 @@ def main():
         while True:
             if (perf_counter() - t0_sec) > msginterval: # Get data on a time interval
                 for device, ina219 in ina219Set.items():
-                    deviceD[device]['data'] = ina219.read()
+                    deviceD[device]['data'] = ina219.getdata()
                     mqtt_client.publish(deviceD[device]['lvl2'].join(MQTT_PUB_LVL1), json.dumps(deviceD[device]['data']))  # publish voltage values
                 t0_sec = perf_counter()
             for device, rotenc in rotaryEncoderSet.items():
-                deviceD[device]['data'] = rotenc.runencoder()
+                deviceD[device]['data'] = rotenc.getdata()
                 if deviceD[device]['data'] is not None:
                     mqtt_client.publish(deviceD[device]['lvl2'].join(MQTT_PUB_LVL1), json.dumps(deviceD[device]['data']))
     except KeyboardInterrupt:

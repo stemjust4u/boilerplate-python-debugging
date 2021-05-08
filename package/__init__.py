@@ -1,1 +1,1 @@
-from .Mmodule import device
+from .Mmodule import *
