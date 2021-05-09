@@ -153,7 +153,7 @@ def on_publish(client, userdata, mid):
     pass 
 
 def on_disconnect(client, userdata,rc=0):
-    main_logger.info("DisConnected result code "+str(rc))
+    main_logger.error("DisConnected result code "+str(rc))
     mqtt_client.loop_stop()
 
 def mqtt_setup(IPaddress):
@@ -283,27 +283,27 @@ def main():
     mqtt_setup('10.0.0.115') # Pass IP address
     
     deviceD = {}  # Primary container for storing all devices, topics, and data
-
+    printcolor = True
     #==== HARDWARE SETUP =====#
     rotaryEncoderSet = {}
-    rotenc_logger = setup_logging(path.dirname(path.abspath(__file__)), 'custom', 'rotenc', log_level=logging.DEBUG, mode=2)
+    logger_rotenc = setup_logging(path.dirname(path.abspath(__file__)), 'custom', 'rotenc', log_level=logging.DEBUG, mode=2)
 
-    device = "rotEnc1"  # Device name should be unique, can not duplicate device ID
+    device = 'rotEnc1'  # Device name should be unique, can not duplicate device ID
     lvl2 = 'rotencoder' # Topic lvl2 name can be a duplicate, meaning multiple devices publishing data on the same topic
     publvl3 = MQTT_CLIENT_ID + "" # Will be a tag in influxdb. Optional to modify it and describe experiment being ran
     data_keys = ['RotEnc1Ci', 'RotEnc1Bi'] # If topic lvl2 name repeats would likely want the data_keys to be unique
     clkPin, dtPin, button_rotenc = 17, 27, 24
     setup_device(device, lvl2, publvl3, data_keys)
-    rotaryEncoderSet[device] =    RotaryEncoder(*data_keys, gainmode="auto", maxA=0.4, address=0x40, mlogger=ina219_logger) #rotaryencoder.RotaryEncoder(clkPin, dtPin, button_rotenc, *data_keys, rotenc_logger)
+    rotaryEncoderSet[device] =  RotaryEncoder(clkPin, dtPin, button_rotenc, *data_keys, logger_rotenc) #rotaryencoder.RotaryEncoder(clkPin, dtPin, button_rotenc, *data_keys, rotenc_logger)
 
     ina219Set = {}   # ina219 library has an internal logger named ina219. name it something different.
-    ina219_logger = setup_logging(path.dirname(path.abspath(__file__)), 'custom', 'ina219lgr', log_level=logging.DEBUG, mode=1)
-    device = "ina219A"  
-    lvl2 = "ina219A"
+    logger_ina219 = setup_logging(path.dirname(path.abspath(__file__)), 'custom', 'ina219lgr', log_level=logging.DEBUG, mode=1)
+    device = 'ina219A'  
+    lvl2 = 'ina219A'
     publvl3 = MQTT_CLIENT_ID + "Test1" # Will be a tag in influxdb. Optional to modify it and describe experiment being ran
     data_keys = ['Vbusf', 'IbusAf', 'PowerWf']
     setup_device(device, lvl2, publvl3, data_keys)
-    ina219Set[device] =  #piina219.PiINA219(*data_keys, gainmode="auto", maxA=0.4, address=0x40, mlogger=ina219_logger)
+    ina219Set[device] = PiINA219(*data_keys, "auto", 0.4, 0x40, logger=logger_ina219) #  PiINA219(*data_keys, gainmode="auto", maxA=0.4, address=0x40, logger=ina219_logger) #piina219.PiINA219(*data_keys, gainmode="auto", maxA=0.4, address=0x40, logger=ina219_logger)
 
     print("\n")
     for logger in _loggers:
@@ -329,7 +329,7 @@ def main():
         sleep(1)
     if mqtt_client.failed_connection:         # If connection failed then stop the loop and main program. Use the rc code to trouble shoot
         mqtt_client.loop_stop()
-        sys.exit()
+        sys.exit(f"{pcolor.RED}Connection failed. Check rc code to trouble shoot{pcolor.ENDC}")
     
     #==== MAIN LOOP ====================#
     # MQTT setup is successful. Initialize dictionaries and start the main loop.   
@@ -340,16 +340,19 @@ def main():
             if (perf_counter() - t0_sec) > msginterval: # Get data on a time interval
                 for device, ina219 in ina219Set.items():
                     deviceD[device]['data'] = ina219.getdata()
-                    mqtt_client.publish(deviceD[device]['lvl2'].join(MQTT_PUB_LVL1), json.dumps(deviceD[device]['data']))  # publish voltage values
+                    main_logger.debug("{} {}".format(deviceD[device]['pubtopic'], json.dumps(deviceD[device]['data'])))
+                    #mqtt_client.publish(deviceD[device]['pubtopic'], json.dumps(deviceD[device]['data']))  # publish voltage values
                 t0_sec = perf_counter()
             for device, rotenc in rotaryEncoderSet.items():
                 deviceD[device]['data'] = rotenc.getdata()
                 if deviceD[device]['data'] is not None:
-                    mqtt_client.publish(deviceD[device]['lvl2'].join(MQTT_PUB_LVL1), json.dumps(deviceD[device]['data']))
+                    main_logger.debug("{} {}".format(deviceD[device]['pubtopic'], json.dumps(deviceD[device]['data'])))
+                    #mqtt_client.publish(deviceD[device]['pubtopic'], json.dumps(deviceD[device]['data']))
+            sleep(1)
     except KeyboardInterrupt:
         main_logger.info(f"{pcolor.WARNING}Exit with ctrl-C{pcolor.ENDC}")
     finally:
-        GPIO.cleanup()
+        #GPIO.cleanup()
         main_logger.info(f"{pcolor.CYAN}GPIO cleaned up{pcolor.ENDC}")
 
 if __name__ == "__main__":
