@@ -28,7 +28,6 @@ class pcolor:
     BOW = '\33[7m'      # Black On White
     BOLD = '\033[1m'
     ENDC = '\033[0m'
-
 class CustomFormatter(logging.Formatter):
     """ Custom logging format with color """
 
@@ -116,7 +115,7 @@ def on_connect(client, userdata, flags, rc):
         mqtt_client.connected = True
         for topic in MQTT_SUB_TOPIC:
             client.subscribe(topic)
-            main_logger.info("Subscribed to: {0}\n".format(topic))
+            main_logger.info("Subscribed to: {0}".format(topic))
         main_logger.info("Successful Connection: {0}".format(str(rc)))
     else:
         mqtt_client.failed_connection = True  # If rc != 0 then failed to connect. Set flag to stop mqtt loop
@@ -253,10 +252,16 @@ def setup_device(device, lvl2, publvl3, data_keys):
         main_logger.error(f"Device {device} already in use. Device name should be unique")
         sys.exit(f"{pcolor.RED}Device {device} already in use. Device name should be unique{pcolor.ENDC}")
 
+def button_callback(channel):
+        global buttonpressed, buttonvalue
+        buttonpressed = True
+        buttonvalue = 1 # str(GPIO.input(jsbutton))
+
 def main():
     global deviceD, printcolor      # Containers setup in 'create' functions and used for Publishing mqtt
     global MQTT_SERVER, MQTT_USER, MQTT_PASSWORD, MQTT_CLIENT_ID, mqtt_client, MQTT_PUB_LVL1
     global _loggers, main_logger, mqtt_logger
+    global buttonpressed, buttonvalue
 
     main_logger_level= logging.DEBUG # CRITICAL=logging off. DEBUG=get variables. INFO=status messages.
     main_logger_type = 'custom'       # 'basic' or 'custom' (with option for log files)
@@ -286,7 +291,7 @@ def main():
     printcolor = True
     #==== HARDWARE SETUP =====#
     rotaryEncoderSet = {}
-    logger_rotenc = setup_logging(path.dirname(path.abspath(__file__)), 'custom', 'rotenc', log_level=logging.DEBUG, mode=2)
+    logger_rotenc = setup_logging(path.dirname(path.abspath(__file__)), 'custom', 'rotenc', log_level=logging.INFO, mode=2)
 
     device = 'rotEnc1'  # Device name should be unique, can not duplicate device ID
     lvl2 = 'rotencoder' # Topic lvl2 name can be a duplicate, meaning multiple devices publishing data on the same topic
@@ -297,13 +302,38 @@ def main():
     rotaryEncoderSet[device] =  RotaryEncoder(clkPin, dtPin, button_rotenc, *data_keys, logger_rotenc) #rotaryencoder.RotaryEncoder(clkPin, dtPin, button_rotenc, *data_keys, rotenc_logger)
 
     ina219Set = {}   # ina219 library has an internal logger named ina219. name it something different.
-    logger_ina219 = setup_logging(path.dirname(path.abspath(__file__)), 'custom', 'ina219lgr', log_level=logging.DEBUG, mode=1)
+    logger_ina219 = setup_logging(path.dirname(path.abspath(__file__)), 'custom', 'ina219l', log_level=logging.INFO, mode=1)
+    
     device = 'ina219A'  
     lvl2 = 'ina219A'
     publvl3 = MQTT_CLIENT_ID + "Test1" # Will be a tag in influxdb. Optional to modify it and describe experiment being ran
     data_keys = ['Vbusf', 'IbusAf', 'PowerWf']
     setup_device(device, lvl2, publvl3, data_keys)
     ina219Set[device] = PiINA219(*data_keys, "auto", 0.4, 0x40, logger=logger_ina219) #  PiINA219(*data_keys, gainmode="auto", maxA=0.4, address=0x40, logger=ina219_logger) #piina219.PiINA219(*data_keys, gainmode="auto", maxA=0.4, address=0x40, logger=ina219_logger)
+
+    adcSet = {}  # Can comment out any ADC type not being used
+    adc_logger = setup_logging(path.dirname(path.abspath(__file__)), 'custom', 'adc', log_level=logging.INFO, mode=1)
+
+    device = 'ads1115'  # Device name should be unique, can not duplicate device ID
+    lvl2 = 'ads1115' # Topic lvl2 name can be a duplicate, meaning multiple devices publishing data on the same topic
+    publvl3 = MQTT_CLIENT_ID + "" # Will be a tag in influxdb. Optional to modify it and describe experiment being ran
+    data_keys = ['a0f'] # If topic lvl2 name repeats would likely want the data_keys to be unique
+    setup_device(device, lvl2, publvl3, data_keys)
+    adcSet[device] = ads1115(1, 0.003, 1, 1, 0x48, adc_logger) # numOfChannels, noiseThreshold (V), max interval, gain=1 (+/-4.1V readings), address
+    
+    device = 'mcp3008'  # Device name should be unique, can not duplicate device ID
+    lvl2 = 'mcp3008' # Topic lvl2 name can be a duplicate, meaning multiple devices publishing data on the same topic
+    publvl3 = MQTT_CLIENT_ID + "" # Will be a tag in influxdb. Optional to modify it and describe experiment being ran
+    data_keys = ['a0f'] # If topic lvl2 name repeats would likely want the data_keys to be unique
+    setup_device(device, lvl2, publvl3, data_keys)
+    adcSet[device] = mcp3008(2, 5, 400, 1, 8, adc_logger) # numOfChannels, vref, noiseThreshold (raw ADC), maxInterval = 1sec, and ChipSelect GPIO pin (7 or 8)
+
+    #Joystick button setup
+    buttonpressed = False
+    buttonvalue = 1
+    jsbutton = 15
+    #GPIO.setup(jsbutton, GPIO.IN, pull_up_down=GPIO.PUD_UP) 
+    #GPIO.add_event_detect(jsbutton, GPIO.BOTH, callback=button_callback)
 
     print("\n")
     for logger in _loggers:
@@ -335,6 +365,7 @@ def main():
     # MQTT setup is successful. Initialize dictionaries and start the main loop.   
     t0_sec = perf_counter() # sec Counter for getting stepper data. Future feature - update interval in  node-red dashboard to link to perf_counter
     msginterval = 1       # Adjust interval to increase/decrease number of mqtt updates.
+    outgoingD = {}
     try:
         while True:
             if (perf_counter() - t0_sec) > msginterval: # Get data on a time interval
@@ -342,6 +373,19 @@ def main():
                     deviceD[device]['data'] = ina219.getdata()
                     main_logger.debug("{} {}".format(deviceD[device]['pubtopic'], json.dumps(deviceD[device]['data'])))
                     #mqtt_client.publish(deviceD[device]['pubtopic'], json.dumps(deviceD[device]['data']))  # publish voltage values
+                for device, adc in adcSet.items():
+                    deviceD[device]['data'] = adc.getdata() # Get the readings from each adc
+                    if deviceD[device]['data'] is not None:
+                        main_logger.debug("{} {}".format(deviceD[device]['pubtopic'], json.dumps(deviceD[device]['data'])))
+                        #mqtt_client.publish(deviceD[device]['pubtopic'], json.dumps(deviceD[device]['data']))
+                    # For joystick with button
+                    if buttonpressed or deviceD[device]['data'] is not None:
+                        if deviceD[device]['data'] is not None:
+                            outgoingD = deviceD[device]['data']
+                        outgoingD['buttoni'] = buttonvalue
+                        #mqtt_client.publish(deviceD[device]['pubtopic'], json.dumps(outgoingD))       # publish voltage values
+                        buttonpressed = False
+                        main_logger.debug(outgoingD)
                 t0_sec = perf_counter()
             for device, rotenc in rotaryEncoderSet.items():
                 deviceD[device]['data'] = rotenc.getdata()

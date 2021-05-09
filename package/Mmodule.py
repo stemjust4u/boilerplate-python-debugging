@@ -1,3 +1,10 @@
+'''
+Create dummy devices for testing
+
+Data is simulated/created with random and numpy methods
+
+'''
+
 import logging, random
 import numpy as np
 from time import sleep, time
@@ -129,7 +136,7 @@ class ads1115:
             return self.adc
 
 class mcp3008:
-    ''' ADC using MCP3008 (SPI). Returns a list with voltge values '''
+    ''' ADC using MCP3008 (SPI). Returns a list with voltage values '''
 
     def __init__(self, numOfChannels, vref, noiseThreshold=350, maxInterval=1, cs=8, logger=None):
         ''' Create spi connection and initialize lists '''
@@ -213,8 +220,8 @@ if __name__ == "__main__":
         main_logger.info('{0} is set at level: {1}'.format(logger, logger.getEffectiveLevel()))
     try:
         while 1:
-            reading = ina219A.getdata()
-            logging.debug(reading)
+            volt_current_power = ina219A.getdata()
+            logging.debug(volt_current_power)
 
             voltage = adc_ads1115.getdata()
             if voltage is not None:
