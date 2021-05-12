@@ -28,6 +28,7 @@ class pcolor:
     BOW = '\33[7m'      # Black On White
     BOLD = '\033[1m'
     ENDC = '\033[0m'
+    
 class CustomFormatter(logging.Formatter):
     """ Custom logging format with color """
 
@@ -123,12 +124,16 @@ def on_connect(client, userdata, flags, rc):
 
 def on_message(client, userdata, msg):
     """on message callback will receive messages from the server/broker. Must be subscribed to the topic in on_connect"""
-    global MQTT_REGEX, mqtt_dummy1, mqtt_dummy2
+    global deviceD, MQTT_REGEX
+    global mqtt_servoID, mqtt_servoAngle, mqtt_dummy1, mqtt_dummy2
     mqtt_logger.debug("Received: {0} with payload: {1}".format(msg.topic, str(msg.payload)))
     msgmatch = re.match(MQTT_REGEX, msg.topic)   # Check for match to subscribed topics
     if msgmatch:
         mqtt_payload = json.loads(str(msg.payload.decode("utf-8", "ignore"))) 
         mqtt_topic = [msgmatch.group(0), msgmatch.group(1), msgmatch.group(2), type(mqtt_payload)] # breaks msg topic into groups - group/group1/group2
+        if mqtt_topic[1] == 'servoZCMD':
+            mqtt_servoID = int(mqtt_topic[2])
+            mqtt_servoAngle = int(mqtt_payload)  # Set the servo angle from mqtt payload
         if mqtt_topic[2] == 'group2A':
             mqtt_dummy1 = mqtt_payload
         elif mqtt_topic[2] == 'group2B':
@@ -261,7 +266,8 @@ def main():
     global deviceD, printcolor      # Containers setup in 'create' functions and used for Publishing mqtt
     global MQTT_SERVER, MQTT_USER, MQTT_PASSWORD, MQTT_CLIENT_ID, mqtt_client, MQTT_PUB_LVL1
     global _loggers, main_logger, mqtt_logger
-    global buttonpressed, buttonvalue
+    global buttonpressed, buttonvalue  # Joystick variables
+    global mqtt_servoID                # Servo variables
 
     main_logger_level= logging.DEBUG # CRITICAL=logging off. DEBUG=get variables. INFO=status messages.
     main_logger_type = 'custom'       # 'basic' or 'custom' (with option for log files)
@@ -278,7 +284,7 @@ def main():
     
     _loggers = [] # container to keep track of loggers created
     main_logger = setup_logging(path.dirname(path.abspath(__file__)), main_logger_type, log_level=main_logger_level, mode=RFHmode)
-    mqtt_logger = setup_logging(path.dirname(path.abspath(__file__)), 'custom', 'mqtt', log_level=logging.INFO, mode=1)
+    mqtt_logger = setup_logging(path.dirname(path.abspath(__file__)), 'custom', 'mqtt', log_level=logging.DEBUG, mode=1)
     
     # MQTT structure: lvl1 = from-to     (ie Pi-2-NodeRed shortened to pi2nred)
     #                 lvl2 = device type (ie servoZCMD, stepperZCMD, adc)
@@ -300,32 +306,34 @@ def main():
     clkPin, dtPin, button_rotenc = 17, 27, 24
     setup_device(device, lvl2, publvl3, data_keys)
     rotaryEncoderSet[device] =  RotaryEncoder(clkPin, dtPin, button_rotenc, *data_keys, logger_rotenc) #rotaryencoder.RotaryEncoder(clkPin, dtPin, button_rotenc, *data_keys, rotenc_logger)
-
+    #------------#
     ina219Set = {}   # ina219 library has an internal logger named ina219. name it something different.
     logger_ina219 = setup_logging(path.dirname(path.abspath(__file__)), 'custom', 'ina219l', log_level=logging.INFO, mode=1)
     
     device = 'ina219A'  
-    lvl2 = 'ina219A'
+    lvl2 = 'ina219A'  # Topic lvl2 name can be a duplicate, meaning multiple devices publishing data on the same topic
     publvl3 = MQTT_CLIENT_ID + "Test1" # Will be a tag in influxdb. Optional to modify it and describe experiment being ran
-    data_keys = ['Vbusf', 'IbusAf', 'PowerWf']
+    data_keys = ['Vbusf', 'IbusAf', 'PowerWf'] # If topic lvl2 name repeats would likely want the data_keys to be unique
     setup_device(device, lvl2, publvl3, data_keys)
     ina219Set[device] = PiINA219(*data_keys, "auto", 0.4, 0x40, logger=logger_ina219) #  PiINA219(*data_keys, gainmode="auto", maxA=0.4, address=0x40, logger=ina219_logger) #piina219.PiINA219(*data_keys, gainmode="auto", maxA=0.4, address=0x40, logger=ina219_logger)
-
+    #------------#
     adcSet = {}  # Can comment out any ADC type not being used
     adc_logger = setup_logging(path.dirname(path.abspath(__file__)), 'custom', 'adc', log_level=logging.INFO, mode=1)
 
-    device = 'ads1115'  # Device name should be unique, can not duplicate device ID
+    device = 'ads1115'
     lvl2 = 'ads1115' # Topic lvl2 name can be a duplicate, meaning multiple devices publishing data on the same topic
     publvl3 = MQTT_CLIENT_ID + "" # Will be a tag in influxdb. Optional to modify it and describe experiment being ran
-    data_keys = ['a0f'] # If topic lvl2 name repeats would likely want the data_keys to be unique
+    data_keys = ['a0f', 'a1f', 'etc'] # If topic lvl2 name repeats would likely want the data_keys to be unique
     setup_device(device, lvl2, publvl3, data_keys)
     adcSet[device] = ads1115(1, 0.003, 1, 1, 0x48, adc_logger) # numOfChannels, noiseThreshold (V), max interval, gain=1 (+/-4.1V readings), address
     
-    device = 'mcp3008'  # Device name should be unique, can not duplicate device ID
+    device = 'mcp3008'
     lvl2 = 'mcp3008' # Topic lvl2 name can be a duplicate, meaning multiple devices publishing data on the same topic
     publvl3 = MQTT_CLIENT_ID + "" # Will be a tag in influxdb. Optional to modify it and describe experiment being ran
-    data_keys = ['a0f'] # If topic lvl2 name repeats would likely want the data_keys to be unique
+    data_keys = ['a0f', 'a1f', 'etc'] # If topic lvl2 name repeats would likely want the data_keys to be unique
     setup_device(device, lvl2, publvl3, data_keys)
+    deviceD[device]['pubtopic2'] = f"{MQTT_SUB_LVL1}/nredZCMD/resetstepgauge"
+    deviceD[device]['data2'] = "resetstepgauge"
     adcSet[device] = mcp3008(2, 5, 400, 1, 8, adc_logger) # numOfChannels, vref, noiseThreshold (raw ADC), maxInterval = 1sec, and ChipSelect GPIO pin (7 or 8)
 
     #Joystick button setup
@@ -334,6 +342,29 @@ def main():
     jsbutton = 15
     #GPIO.setup(jsbutton, GPIO.IN, pull_up_down=GPIO.PUD_UP) 
     #GPIO.add_event_detect(jsbutton, GPIO.BOTH, callback=button_callback)
+
+    #------------#
+    device = 'servoAngle'
+    lvl2 = 'servo'
+    publvl3 = MQTT_CLIENT_ID + ""
+    data_keys = ['NA']             # Servo currently does not publish any data back to mqtt
+    setup_device(device, lvl2, publvl3, data_keys)
+    servoID, mqtt_servoID = 0, 0   # Initialize. Updated in mqtt on_message
+    numservos = 16     # Number of servo channels to pass to ServoKit. Must be 8 or 16.
+    mqtt_servoAngle = 90
+    deviceD[device] = [90]*numservos   # Initialize at 90°
+    i2caddr = 0x40
+                      # Other arguments reference_clock_speed=25000000, frequency=50) 50Hz = 20ms period
+    pca9685 = [ServoKit(address=i2caddr, channels=numservos)]*numservos
+    #main_logger.info(('Servo PCA9685 Kit on address:{0} {1}'.format(i2caddr, pca9685)))
+
+    main_logger.info("ALL DICTIONARIES")
+    for device, item in deviceD.items():
+        main_logger.info(device)
+        if isinstance(item, dict):
+            for key in item:
+                main_logger.info("\t{0}:{1}".format(key, item[key]))
+        else: main_logger.info("\t{0}".format(item))
 
     print("\n")
     for logger in _loggers:
@@ -368,6 +399,9 @@ def main():
     outgoingD = {}
     try:
         while True:
+            servoID = mqtt_servoID                                      # Servo commands coming from mqtt
+            deviceD['servoAngle'][servoID] = mqtt_servoAngle            # But could change data source from something other than mqtt
+            pca9685[servoID].servo(deviceD['servoAngle'][mqtt_servoID]) # Set the servo angle
             if (perf_counter() - t0_sec) > msginterval: # Get data on a time interval
                 for device, ina219 in ina219Set.items():
                     deviceD[device]['data'] = ina219.getdata()

@@ -8,6 +8,14 @@ Data is simulated/created with random and numpy methods
 import logging, random
 import numpy as np
 from time import sleep, time
+
+class ServoKit:
+    def __init__(self, address, channels):
+        self.dummy = address
+        self.dummy2 = channels
+
+    def servo(self, angle):
+        self.angle = angle
 class RotaryEncoder:
     def __init__(self, clkPin, dtPin, button, key1='RotEncCi', key2='RotEncBi', logger=None):
         self.clkPin = clkPin
@@ -16,7 +24,7 @@ class RotaryEncoder:
         self.outgoing = {}
         self.og_counter = key1
         self.og_button = key2
-        if logger is not None:                        # Use logger passed as argument
+        if logger is not None:                         # Use logger passed as argument
             self.logger = logger
         elif len(logging.getLogger().handlers) == 0:   # Root logger does not exist and no custom logger passed
             logging.basicConfig(level=logging.INFO)      # Create root logger
@@ -133,7 +141,7 @@ class ads1115:
             self.time0 = time()
             self.sensorChanged = False
             self.timelimit = False
-            return self.adc
+            return self.adc    # Return dict with voltage for each channel: a0f, a1f, a2f etc
 
 class mcp3008:
     ''' ADC using MCP3008 (SPI). Returns a list with voltage values '''
@@ -182,7 +190,7 @@ class mcp3008:
             self.time0 = time()
             self.sensorChanged = False
             self.timelimit = False
-            return self.adc
+            return self.adc   # Return dict with voltage for each channel: a0f, a1f, a2f etc
 
 if __name__ == "__main__":
     _loggers = []
