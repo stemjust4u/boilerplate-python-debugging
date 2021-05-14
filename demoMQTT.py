@@ -125,7 +125,9 @@ def on_connect(client, userdata, flags, rc):
 def on_message(client, userdata, msg):
     """on message callback will receive messages from the server/broker. Must be subscribed to the topic in on_connect"""
     global deviceD, MQTT_REGEX
-    global mqtt_servoID, mqtt_servoAngle, mqtt_dummy1, mqtt_dummy2
+    global mqtt_servoID, mqtt_servoAngle
+    global mqtt_controlsD, mqtt_stepreset
+    global mqtt_dummy1, mqtt_dummy2
     mqtt_logger.debug("Received: {0} with payload: {1}".format(msg.topic, str(msg.payload)))
     msgmatch = re.match(MQTT_REGEX, msg.topic)   # Check for match to subscribed topics
     if msgmatch:
@@ -134,10 +136,14 @@ def on_message(client, userdata, msg):
         if mqtt_topic[1] == 'servoZCMD':
             mqtt_servoID = int(mqtt_topic[2])
             mqtt_servoAngle = int(mqtt_payload)  # Set the servo angle from mqtt payload
-        if mqtt_topic[2] == 'group2A':
-            mqtt_dummy1 = mqtt_payload
-        elif mqtt_topic[2] == 'group2B':
-            mqtt_dummy2 = mqtt_payload
+        if mqtt_topic[2] == 'controls':
+            mqtt_controlsD = mqtt_payload
+        if mqtt_topic[2] == 'stepreset':
+            mqtt_stepreset = mqtt_payload
+        #if mqtt_topic[2] == 'group2A':
+        #    mqtt_dummy1 = mqtt_payload
+        #if mqtt_topic[2] == 'group2B':
+        #    mqtt_dummy2 = mqtt_payload
     # If Debugging will print the JSON incoming payload and unpack it
     if mqtt_logger.getEffectiveLevel() == 10:
         mqtt_logger.debug("Topic grp0:{0} grp1:{1} grp2:{2}".format(msgmatch.group(0), msgmatch.group(1), msgmatch.group(2)))
@@ -153,7 +159,7 @@ def on_message(client, userdata, msg):
 
 def on_publish(client, userdata, mid):
     """on publish will send data to client"""
-    mqtt_logger.debug("msg ID: " + str(mid)) 
+    #mqtt_logger.debug("msg ID: " + str(mid)) 
     pass 
 
 def on_disconnect(client, userdata,rc=0):
@@ -266,8 +272,9 @@ def main():
     global deviceD, printcolor      # Containers setup in 'create' functions and used for Publishing mqtt
     global MQTT_SERVER, MQTT_USER, MQTT_PASSWORD, MQTT_CLIENT_ID, mqtt_client, MQTT_PUB_LVL1
     global _loggers, main_logger, mqtt_logger
-    global buttonpressed, buttonvalue  # Joystick variables
-    global mqtt_servoID                # Servo variables
+    global buttonpressed, buttonvalue     # Joystick variables
+    global mqtt_servoID                   # Servo variables
+    global mqtt_controlsD, mqtt_stepreset # Stepper motor controls
 
     main_logger_level= logging.DEBUG # CRITICAL=logging off. DEBUG=get variables. INFO=status messages.
     main_logger_type = 'custom'       # 'basic' or 'custom' (with option for log files)
@@ -284,7 +291,7 @@ def main():
     
     _loggers = [] # container to keep track of loggers created
     main_logger = setup_logging(path.dirname(path.abspath(__file__)), main_logger_type, log_level=main_logger_level, mode=RFHmode)
-    mqtt_logger = setup_logging(path.dirname(path.abspath(__file__)), 'custom', 'mqtt', log_level=logging.DEBUG, mode=1)
+    mqtt_logger = setup_logging(path.dirname(path.abspath(__file__)), 'custom', 'mqtt', log_level=logging.INFO, mode=1)
     
     # MQTT structure: lvl1 = from-to     (ie Pi-2-NodeRed shortened to pi2nred)
     #                 lvl2 = device type (ie servoZCMD, stepperZCMD, adc)
@@ -358,6 +365,20 @@ def main():
     pca9685 = [ServoKit(address=i2caddr, channels=numservos)]*numservos
     #main_logger.info(('Servo PCA9685 Kit on address:{0} {1}'.format(i2caddr, pca9685)))
 
+    logger_stepper = setup_logging(path.dirname(path.abspath(__file__)), 'custom', 'stepper', log_level=logging.INFO, mode=1)
+    device = 'stepper'
+    lvl2 = 'stepper'
+    publvl3 = MQTT_CLIENT_ID + ""
+    data_keys = ['delayf', 'cpufreq0i', 'main_msf', 'looptime0f', 'looptime1f', 'steps0i', 'steps1i', 'rpm0f', 'rpm1f', 'speed0i', 'speed1i']
+    m1pins = [12, 16, 20, 21]
+    m2pins = [19, 13, 6, 5]
+    mqtt_stepreset = False   # used to reset steps thru nodered gui
+    mqtt_controlsD = {"delay":[0.8,1.0], "speed":[3,3], "mode":[0,0], "inverse":[False,True], "step":[2038, 2038], "startstep":[0,0]}
+    setup_device(device, lvl2, publvl3, data_keys)
+    deviceD[device]['pubtopic2'] = f"{MQTT_SUB_LVL1}/nredZCMD/resetstepgauge" # Extra topic used to tell node red to reset the step gauges
+    deviceD[device]['data2'] = "resetstepgauge"
+    motor = Stepper(m1pins, m2pins, logger=logger_stepper)  # can enter 1 to 2 list of pins (up to 2 motors)
+
     main_logger.info("ALL DICTIONARIES")
     for device, item in deviceD.items():
         main_logger.info(device)
@@ -395,14 +416,16 @@ def main():
     #==== MAIN LOOP ====================#
     # MQTT setup is successful. Initialize dictionaries and start the main loop.   
     t0_sec = perf_counter() # sec Counter for getting stepper data. Future feature - update interval in  node-red dashboard to link to perf_counter
-    msginterval = 1       # Adjust interval to increase/decrease number of mqtt updates.
+    msginterval = 0.5       # Adjust interval to increase/decrease number of mqtt updates.
+    t0loop_ns = perf_counter_ns() # nanosec Counter for how long it takes to run motor and get messages
     outgoingD = {}
     try:
         while True:
-            servoID = mqtt_servoID                                      # Servo commands coming from mqtt
-            deviceD['servoAngle'][servoID] = mqtt_servoAngle            # But could change data source from something other than mqtt
-            pca9685[servoID].servo(deviceD['servoAngle'][mqtt_servoID]) # Set the servo angle
-            if (perf_counter() - t0_sec) > msginterval: # Get data on a time interval
+
+            t0main_ns = perf_counter_ns() - t0loop_ns  # Monitor how long the main/total loop takes
+            t0loop_ns = perf_counter_ns()
+
+            if (perf_counter() - t0_sec) > msginterval: # getdata() from devices on msginterval (also publish data). Note - Does not affect on_message/mqtt data. on_message runs in parallel
                 for device, ina219 in ina219Set.items():
                     deviceD[device]['data'] = ina219.getdata()
                     main_logger.debug("{} {}".format(deviceD[device]['pubtopic'], json.dumps(deviceD[device]['data'])))
@@ -420,13 +443,29 @@ def main():
                         #mqtt_client.publish(deviceD[device]['pubtopic'], json.dumps(outgoingD))       # publish voltage values
                         buttonpressed = False
                         main_logger.debug(outgoingD)
+                    deviceD['stepper']['data'] = motor.getdata()
+                    if deviceD['stepper']['data'] != "na":
+                        deviceD['stepper']['data']["main_msf"] = t0main_ns/1000000  # Monitor the main/total loop time
+                        mqtt_client.publish(deviceD['stepper']['pubtopic'], json.dumps(deviceD['stepper']['data'])) 
+                    if mqtt_stepreset:
+                        motor.resetsteps()
+                        mqtt_stepreset = False
+                        mqtt_client.publish(deviceD['stepper']['pubtopic2'], json.dumps(deviceD['stepper']['data2']))
                 t0_sec = perf_counter()
-            for device, rotenc in rotaryEncoderSet.items():
-                deviceD[device]['data'] = rotenc.getdata()
-                if deviceD[device]['data'] is not None:
-                    main_logger.debug("{} {}".format(deviceD[device]['pubtopic'], json.dumps(deviceD[device]['data'])))
-                    #mqtt_client.publish(deviceD[device]['pubtopic'], json.dumps(deviceD[device]['data']))
-            sleep(1)
+                for device, rotenc in rotaryEncoderSet.items(): # ** Remove rotary encoder from msginterval loop for real application
+                    deviceD[device]['data'] = rotenc.getdata()
+                    if deviceD[device]['data'] is not None:
+                        main_logger.debug("{} {}".format(deviceD[device]['pubtopic'], json.dumps(deviceD[device]['data'])))
+                        #mqtt_client.publish(deviceD[device]['pubtopic'], json.dumps(deviceD[device]['data']))
+
+            motor_controls = mqtt_controlsD  # Get updated motor controls from mqtt. Could change this to another source
+            motor.step(motor_controls) # Pass instructions for stepper motor for testing
+
+            servoID = mqtt_servoID                                      # Servo commands coming from mqtt
+            deviceD['servoAngle'][servoID] = mqtt_servoAngle            # But could change data source to something other than mqtt
+            pca9685[servoID].servo(deviceD['servoAngle'][mqtt_servoID]) # Set the servo angle
+
+            #sleep(1)
     except KeyboardInterrupt:
         main_logger.info(f"{pcolor.WARNING}Exit with ctrl-C{pcolor.ENDC}")
     finally:
