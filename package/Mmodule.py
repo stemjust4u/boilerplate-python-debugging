@@ -202,6 +202,7 @@ class ServoKit:
 
     def servo(self, angle):
         self.angle = angle
+        
 class RotaryEncoder:
     def __init__(self, clkPin, dtPin, button, key1='RotEncCi', key2='RotEncBi', logger=None):
         self.clkPin = clkPin

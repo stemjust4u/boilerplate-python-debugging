@@ -1,6 +1,6 @@
 import sys, json, logging, re
 #import RPi.GPIO as GPIO
-from time import sleep, perf_counter
+from time import sleep, perf_counter, perf_counter_ns
 import paho.mqtt.client as mqtt
 from os import path
 from pathlib import Path
@@ -276,9 +276,8 @@ def main():
     global mqtt_servoID                   # Servo variables
     global mqtt_controlsD, mqtt_stepreset # Stepper motor controls
 
-    main_logger_level= logging.DEBUG # CRITICAL=logging off. DEBUG=get variables. INFO=status messages.
-    main_logger_type = 'custom'       # 'basic' or 'custom' (with option for log files)
-    RFHmode = 1 # log level and RFH mode will determine output for custom loggers
+    # Type of loggers - 'basic' or 'custom'
+    # 'custom' type -  log level and mode will determine output for custom loggers
                 # log_level and mode will determine output
                 #log_level, RFHmode|  logger.x() | output
                 #------------------|-------------|-----------
@@ -289,8 +288,8 @@ def main():
                 #      DEBUG,2     |  info+debug | print+logfile
                 #      DEBUG,3     |  info+debug | logfile
     
-    _loggers = [] # container to keep track of loggers created
-    main_logger = setup_logging(path.dirname(path.abspath(__file__)), main_logger_type, log_level=main_logger_level, mode=RFHmode)
+    _loggers = [] # container to keep track of loggers created  # CRITICAL=logging off. DEBUG=get variables. INFO=status messages.
+    main_logger = setup_logging(path.dirname(path.abspath(__file__)), 'custom', log_level=logging.DEBUG, mode=1)
     mqtt_logger = setup_logging(path.dirname(path.abspath(__file__)), 'custom', 'mqtt', log_level=logging.INFO, mode=1)
     
     # MQTT structure: lvl1 = from-to     (ie Pi-2-NodeRed shortened to pi2nred)
